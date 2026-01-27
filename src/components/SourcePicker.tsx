@@ -7,7 +7,10 @@ interface FileInfo {
     name: string;
     isAvailable: boolean;
     content?: any;
+    isSample?: boolean;
 }
+
+const PREVIEW_SAMPLE_SIZE = 5;
 
 interface SourcePickerProps {
     onFilesSelected: (files: FileInfo[]) => void;
@@ -21,15 +24,22 @@ export const SourcePicker: React.FC<SourcePickerProps> = ({ onFilesSelected, fil
         if (!rawFiles) return;
 
         const fileList = Array.from(rawFiles);
+
+        // Show loading state or progress if needed, but for now we just process metadata quickly
         const processedFiles: FileInfo[] = await Promise.all(
-            fileList.map(async (file) => {
-                try {
-                    const text = await file.text();
-                    const content = JSON.parse(text);
-                    return { file, name: file.name, isAvailable: true, content };
-                } catch (err) {
-                    return { file, name: file.name, isAvailable: false };
+            fileList.map(async (file, index) => {
+                // Only parse content for the first N files
+                if (index < PREVIEW_SAMPLE_SIZE) {
+                    try {
+                        const text = await file.text();
+                        const content = JSON.parse(text);
+                        return { file, name: file.name, isAvailable: true, content, isSample: true };
+                    } catch (err) {
+                        return { file, name: file.name, isAvailable: false, isSample: true };
+                    }
                 }
+                // For others, just keep the file reference and metadata
+                return { file, name: file.name, isAvailable: true, isSample: false };
             })
         );
 
@@ -63,8 +73,8 @@ export const SourcePicker: React.FC<SourcePickerProps> = ({ onFilesSelected, fil
                 </div>
                 <h1 style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>Trip Schema Exporter</h1>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '1.1rem', maxWidth: '600px', margin: '0 auto' }}>
-                    Select a folder containing multiple Tour JSON files or a single JSON to get started.
-                    Everything stays in your browser.
+                    Select a folder containing multiple Tour JSON files.
+                    We will sample the first {PREVIEW_SAMPLE_SIZE} files for instant preview and schema analysis.
                 </p>
             </div>
 

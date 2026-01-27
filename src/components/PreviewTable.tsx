@@ -1,96 +1,98 @@
 import React from 'react';
-import { motion } from 'framer-motion';
-import { FileSpreadsheet, AlertTriangle } from 'lucide-react';
+import { Info, HelpCircle } from 'lucide-react';
+import { getValueByPath } from '../utils/schema';
 
 interface PreviewTableProps {
     data: any[];
     selectedPaths: string[];
+    onInspect: (data: any, path: string, type: 'object' | 'array') => void;
 }
 
 export const PreviewTable: React.FC<PreviewTableProps> = ({
     data,
-    selectedPaths
+    selectedPaths,
+    onInspect
 }) => {
-    return (
-        <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="glass-panel"
-            style={{ padding: '2rem', display: 'flex', flexDirection: 'column', gap: '2rem' }}
-        >
-            <div>
-                <h2 style={{ fontSize: '1.5rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <FileSpreadsheet style={{ color: 'var(--accent-color)' }} /> CSV Preview (Tour-level)
-                </h2>
-                <p style={{ color: 'var(--text-secondary)' }}>
-                    Showing a preview of the first 5 records. Each TourID is represented by exactly one row.
-                </p>
-            </div>
+    const renderCell = (row: any, path: string) => {
+        const val = getValueByPath(row, path);
 
-            <div style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: '12px' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+        if (val === undefined || val === null || (Array.isArray(val) && val.length === 0)) {
+            return <span style={{ color: 'var(--text-secondary)', opacity: 0.3 }}>-</span>;
+        }
+
+        if (Array.isArray(val)) {
+            // If it's a flat array of primitives, join them
+            if (val.every(v => typeof v !== 'object')) {
+                const str = val.join('; ');
+                return <div className="smart-cell" title={str}>{str}</div>;
+            }
+            return (
+                <div className="smart-cell" onClick={() => onInspect(val, path, 'array')}>
+                    <span className="smart-cell-tag tag-array">Array</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>{val.length} items</span>
+                </div>
+            );
+        }
+
+        if (typeof val === 'object') {
+            const keys = Object.keys(val).length;
+            return (
+                <div className="smart-cell" onClick={() => onInspect(val, path, 'object')}>
+                    <span className="smart-cell-tag tag-object">Object</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>{keys} keys</span>
+                </div>
+            );
+        }
+
+        const strVal = String(val);
+        return (
+            <div className="smart-cell" title={strVal}>
+                {strVal}
+            </div>
+        );
+    };
+
+    if (selectedPaths.length === 0) {
+        return (
+            <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div style={{ background: 'rgba(234, 179, 8, 0.1)', color: '#eab308', padding: '12px 16px', borderRadius: '8px', border: '1px solid rgba(234, 179, 8, 0.2)', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.85rem' }}>
+                    <Info size={16} />
+                    <span><strong>Preview Mode:</strong> Only the first 5 tours are shown here for performance. The full dataset will be processed during export.</span>
+                </div>
+                <div className="glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', gap: '1rem' }}>
+                    <HelpCircle size={48} opacity={0.2} />
+                    <p>Select fields from the explorer to see a preview</p>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ background: 'rgba(234, 179, 8, 0.1)', color: '#eab308', padding: '12px 16px', borderRadius: '8px', border: '1px solid rgba(234, 179, 8, 0.2)', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.85rem' }}>
+                <Info size={16} />
+                <span><strong>Preview Mode:</strong> Only the first 5 tours are shown here for performance. The full dataset will be processed during export.</span>
+            </div>
+            <div className="preview-table-container glass-panel" style={{ flex: 1, overflow: 'auto' }}>
+                <table className="preview-table">
                     <thead>
-                        <tr style={{ background: 'var(--surface-color)', textAlign: 'left' }}>
+                        <tr>
                             {selectedPaths.map(path => (
-                                <th key={path} style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                                    {path}
-                                </th>
+                                <th key={path}>{path}</th>
                             ))}
                         </tr>
                     </thead>
                     <tbody>
                         {data.map((row, i) => (
-                            <tr key={i} style={{ borderBottom: i === data.length - 1 ? 'none' : '1px solid var(--border-color)' }}>
-                                {selectedPaths.map(path => {
-                                    const val = String(row[path]);
-                                    const isLong = val.length > 100;
-                                    return (
-                                        <td
-                                            key={path}
-                                            style={{
-                                                padding: '12px 16px',
-                                                color: 'var(--text-primary)',
-                                                maxWidth: '300px',
-                                                overflow: 'hidden',
-                                                textOverflow: 'ellipsis',
-                                                whiteSpace: 'nowrap'
-                                            }}
-                                            title={val}
-                                        >
-                                            {val || <span style={{ color: 'var(--text-secondary)', opacity: 0.3 }}>-</span>}
-                                            {isLong && <span style={{ marginLeft: '4px' }}>...</span>}
-                                        </td>
-                                    );
-                                })}
+                            <tr key={i}>
+                                {selectedPaths.map(path => (
+                                    <td key={path}>{renderCell(row, path)}</td>
+                                ))}
                             </tr>
                         ))}
                     </tbody>
                 </table>
             </div>
-
-            {data.length === 0 && (
-                <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
-                    No records to display. Please select at least one field.
-                </div>
-            )}
-
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem' }}>
-                <div style={{
-                    background: 'rgba(245, 158, 11, 0.1)',
-                    border: '1px solid var(--warning-color)',
-                    padding: '1rem',
-                    borderRadius: '8px',
-                    display: 'flex',
-                    gap: '12px',
-                    fontSize: '0.85rem',
-                    color: 'var(--warning-color)'
-                }}>
-                    <AlertTriangle size={18} style={{ flexShrink: 0 }} />
-                    <div>
-                        <strong>Tour-level Rule:</strong> All array data has been flattened into single cells using the default separator (;).
-                    </div>
-                </div>
-            </div>
-        </motion.div>
+        </div>
     );
 };

@@ -1,164 +1,200 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { SourcePicker } from './components/SourcePicker';
-import { FieldSelector } from './components/FieldSelector';
+import { SchemaTree } from './components/SchemaTree';
 import { PreviewTable } from './components/PreviewTable';
-import { ExportPanel } from './components/ExportPanel';
-import { buildSchema, flattenTour } from './utils/schema';
-import { ChevronRight, ChevronLeft, Download, Eye, ListFilter, FileJson } from 'lucide-react';
+import { ExportSettings } from './components/ExportSettings';
+import type { ArrayRule } from './components/ExportSettings';
+import { NestedDetail } from './components/NestedDetail';
+import { buildSchemaTree, mergeSchemaTrees, flattenTour, getAllLeafPaths } from './utils/schema';
+import { RefreshCcw, Download } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
-
-export type Step = 'picker' | 'selector' | 'preview' | 'export';
+import Papa from 'papaparse';
 
 export interface FileInfo {
   file: File;
   name: string;
   isAvailable: boolean;
   content?: any;
+  isSample?: boolean;
 }
 
 function App() {
-  const [step, setStep] = useState<Step>('picker');
   const [files, setFiles] = useState<FileInfo[]>([]);
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
-  const [arraySeparator] = useState('; ');
+  const [arrayRule, setArrayRule] = useState<ArrayRule>('join');
+  const [exportFormat, setExportFormat] = useState<'csv' | 'jsonl'>('csv');
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
+  const [inspector, setInspector] = useState<{ data: any; path: string; type: 'object' | 'array' } | null>(null);
 
-  const parsableFiles = useMemo(() => files.filter(f => f.isAvailable), [files]);
+  // Derive Schema Tree from sample files
+  const schemaTree = useMemo(() => {
+    const samples = files.filter(f => f.isSample && f.isAvailable);
+    if (samples.length === 0) return null;
 
-  const schema = useMemo(() => {
-    if (parsableFiles.length === 0) return {};
-    // Merge schema from first 50 files
-    let mergedSchema = {};
-    parsableFiles.slice(0, 50).forEach(f => {
-      mergedSchema = buildSchema(f.content, '', mergedSchema);
+    let merged = buildSchemaTree(samples[0].content);
+    samples.slice(1).forEach(f => {
+      const nextPlan = buildSchemaTree(f.content);
+      merged = mergeSchemaTrees(merged, nextPlan);
     });
-    return mergedSchema;
-  }, [parsableFiles]);
+    return merged;
+  }, [files]);
+
+  // Default select all fields when schema is first ready
+  useEffect(() => {
+    if (schemaTree && selectedPaths.length === 0) {
+      setSelectedPaths(getAllLeafPaths(schemaTree));
+    }
+  }, [schemaTree, selectedPaths.length]);
+  const handleTogglePath = (path: string, included: boolean) => {
+    setSelectedPaths(prev => included ? [...prev, path] : prev.filter(p => p !== path));
+  };
+
+  const handleToggleBatch = (paths: string[], included: boolean) => {
+    setSelectedPaths(prev => {
+      const filtered = prev.filter(p => !paths.includes(p));
+      return included ? [...filtered, ...paths] : filtered;
+    });
+  };
 
   const previewData = useMemo(() => {
-    if (parsableFiles.length === 0 || selectedPaths.length === 0) return [];
-    return parsableFiles.slice(0, 5).map(f => flattenTour(f.content, selectedPaths, arraySeparator));
-  }, [parsableFiles, selectedPaths, arraySeparator]);
+    return files.filter(f => f.isSample && f.isAvailable).map(f => f.content);
+  }, [files]);
 
-  const handleNext = () => {
-    if (step === 'picker') setStep('selector');
-    else if (step === 'selector') setStep('preview');
-    else if (step === 'preview') setStep('export');
+  const handleExport = async () => {
+    setIsExporting(true);
+    setExportProgress(0);
+    const parsable = files.filter(f => f.isAvailable);
+    const total = parsable.length;
+    const results: any[] = [];
+
+    // Process in chunks to maintain UI responsiveness and memory safety
+    const CHUNK_SIZE = 50;
+    for (let i = 0; i < total; i += CHUNK_SIZE) {
+      const chunk = parsable.slice(i, i + CHUNK_SIZE);
+      const processedChunk = await Promise.all(chunk.map(async (f) => {
+        try {
+          let content = f.content;
+          if (!content) {
+            const text = await f.file.text();
+            content = JSON.parse(text);
+          }
+          const flattened = flattenTour(content, selectedPaths, arrayRule);
+          flattened['TourID_Meta'] = content.TourID || 'UNKNOWN';
+          flattened['SourceFile'] = f.name;
+          return flattened;
+        } catch (e) {
+          console.error(`Failed to process ${f.name}`, e);
+          return null;
+        }
+      }));
+
+      results.push(...processedChunk.filter(Boolean));
+      setExportProgress(Math.min(100, Math.round(((i + chunk.length) / total) * 100)));
+      // Yield to main thread
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+
+    let content: string;
+    let extension: string;
+
+    if (exportFormat === 'csv') {
+      content = Papa.unparse(results);
+      extension = 'csv';
+    } else {
+      content = results.map(d => JSON.stringify(d)).join('\n');
+      extension = 'jsonl';
+    }
+
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `trip_export_${Date.now()}.${extension}`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setIsExporting(false);
+    setExportProgress(0);
   };
 
-  const handleBack = () => {
-    if (step === 'selector') setStep('picker');
-    else if (step === 'preview') setStep('selector');
-    else if (step === 'export') setStep('preview');
-  };
+  if (files.length === 0) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <SourcePicker
+          files={files}
+          onFilesSelected={setFiles}
+          onContinue={() => { }} // No longer needed for single-page but kept for component compatibility
+        />
+      </div>
+    );
+  }
 
   return (
-    <div className="container" style={{ padding: '2rem 1rem 5rem' }}>
-      <header style={{ marginBottom: '3rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+    <div className="container" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <header style={{ marginBottom: '2rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <div style={{ width: '40px', height: '40px', background: 'var(--accent-color)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>T</div>
           <div>
-            <h2 style={{ fontSize: '1.25rem', margin: 0 }}>TripSchemaExporter</h2>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0 }}>Tour-level CSV Generator</p>
+            <h2 style={{ fontSize: '1.25rem', margin: 0 }}>TripSchemaExporter <span style={{ fontSize: '0.7rem', background: 'rgba(59, 130, 246, 0.2)', color: 'var(--accent-color)', padding: '2px 6px', borderRadius: '4px', marginLeft: '8px' }}>PRO</span></h2>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0 }}>Advanced Tour-level Data Processor</p>
           </div>
         </div>
 
-        <nav style={{ display: 'flex', gap: '0.5rem', background: 'var(--surface-color)', padding: '4px', borderRadius: '12px' }}>
-          {[
-            { id: 'picker', icon: FileJson, label: 'Source' },
-            { id: 'selector', icon: ListFilter, label: 'Fields' },
-            { id: 'preview', icon: Eye, label: 'Preview' },
-            { id: 'export', icon: Download, label: 'Export' }
-          ].map((item) => {
-            const isActive = step === item.id;
-            const Icon = item.icon;
-            return (
-              <div
-                key={item.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  padding: '8px 16px',
-                  borderRadius: '10px',
-                  background: isActive ? 'var(--accent-color)' : 'transparent',
-                  color: isActive ? 'white' : 'var(--text-secondary)',
-                  transition: 'all 0.2s ease',
-                  fontSize: '0.9rem',
-                  fontWeight: 500
-                }}
-              >
-                <Icon size={16} />
-                {item.label}
-              </div>
-            );
-          })}
-        </nav>
+        <div style={{ display: 'flex', gap: '1rem' }}>
+          <button className="btn-secondary" onClick={() => window.location.reload()}>
+            <RefreshCcw size={16} /> Reset
+          </button>
+          <button className="btn-primary" onClick={handleExport} disabled={selectedPaths.length === 0 || isExporting}>
+            <Download size={16} /> Export
+          </button>
+        </div>
       </header>
 
-      <main>
-        <AnimatePresence mode="wait">
-          {step === 'picker' && (
-            <SourcePicker
-              key="picker"
-              files={files}
-              onFilesSelected={(newFiles) => {
-                setFiles(newFiles);
-              }}
-              onContinue={() => setStep('selector')}
-            />
-          )}
-
-          {step === 'selector' && (
-            <FieldSelector
-              key="selector"
-              schema={schema}
+      <div className="dashboard">
+        <aside className="explorer-section">
+          {schemaTree && (
+            <SchemaTree
+              tree={schemaTree}
               selectedPaths={selectedPaths}
-              onPathsChange={setSelectedPaths}
+              onTogglePath={handleTogglePath}
+              onToggleBatch={handleToggleBatch}
             />
           )}
+        </aside>
 
-          {step === 'preview' && (
-            <PreviewTable
-              key="preview"
-              data={previewData}
-              selectedPaths={selectedPaths}
-            />
-          )}
+        <section className="preview-section">
+          <PreviewTable
+            data={previewData}
+            selectedPaths={selectedPaths}
+            onInspect={(data, path, type) => setInspector({ data, path, type })}
+          />
+        </section>
 
-          {step === 'export' && (
-            <ExportPanel
-              key="export"
-              files={parsableFiles}
-              selectedPaths={selectedPaths}
-              arraySeparator={arraySeparator}
-            />
-          )}
-        </AnimatePresence>
-      </main>
+        <section className="export-section">
+          <ExportSettings
+            totalFiles={files.filter(f => f.isAvailable).length}
+            arrayRule={arrayRule}
+            onRuleChange={setArrayRule}
+            format={exportFormat}
+            onFormatChange={setExportFormat}
+            onExport={handleExport}
+            isExporting={isExporting}
+            exportProgress={exportProgress}
+          />
+        </section>
+      </div>
 
-      {step !== 'picker' && (
-        <footer style={{
-          position: 'fixed',
-          bottom: '2rem',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 100,
-          display: 'flex',
-          gap: '1rem'
-        }}>
-          <button className="btn-secondary" onClick={handleBack} style={{ padding: '12px 32px' }}>
-            <ChevronLeft size={20} /> Back
-          </button>
-          <button
-            className="btn-primary"
-            onClick={handleNext}
-            style={{ padding: '12px 48px' }}
-            disabled={step === 'selector' && selectedPaths.length === 0}
-          >
-            {step === 'preview' ? 'Go to Export' : 'Continue'} <ChevronRight size={20} />
-          </button>
-        </footer>
-      )}
+      <AnimatePresence>
+        {inspector && (
+          <NestedDetail
+            data={inspector.data}
+            path={inspector.path}
+            type={inspector.type}
+            onClose={() => setInspector(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -1,77 +1,135 @@
 export type SchemaNode = {
+    name: string;
     path: string;
     type: 'scalar' | 'array' | 'object';
-    children?: Record<string, SchemaNode>;
-    isNullable?: boolean;
+    children?: SchemaNode[];
 };
 
+export type ArrayRule = 'join' | 'count' | 'first' | 'last' | 'json';
+
 /**
- * Recursively scans an object to build a schema map of dot-paths.
+ * Recursively scans an object to build a nested schema tree.
  */
-export function buildSchema(obj: any, parentPath = '', schema: Record<string, SchemaNode> = {}): Record<string, SchemaNode> {
-    if (obj === null || obj === undefined) return schema;
+export function buildSchemaTree(obj: any, parentPath = '', name = 'root'): SchemaNode {
+    const type = Array.isArray(obj) ? 'array' : (obj && typeof obj === 'object') ? 'object' : 'scalar';
 
-    if (Array.isArray(obj)) {
-        const arrayPath = parentPath ? `${parentPath}[]` : '[]';
-        if (!schema[arrayPath]) {
-            schema[arrayPath] = { path: arrayPath, type: 'array' };
+    let path = parentPath;
+    if (name !== 'root') {
+        path = parentPath ? `${parentPath}.${name}` : name;
+    }
+
+    const node: SchemaNode = { name, path, type };
+
+    if (type === 'array') {
+        const arrayPath = `${path}[]`;
+        node.path = arrayPath;
+
+        if (obj.length > 0) {
+            // Instead of a simple object merge, we build a schema for each item and merge them
+            // this ensures we don't lose nested structure if some items have empty arrays/objects
+            let mergedItemTree: SchemaNode | null = null;
+            for (const item of obj) {
+                const itemTree = buildSchemaTree(item, arrayPath, 'item');
+                if (!mergedItemTree) {
+                    mergedItemTree = itemTree;
+                } else {
+                    mergedItemTree = mergeSchemaTrees(mergedItemTree, itemTree);
+                }
+            }
+
+            if (mergedItemTree && mergedItemTree.children) {
+                node.children = mergedItemTree.children;
+            }
         }
-        // Scan items in array to find all possible fields
-        obj.forEach(item => {
-            if (typeof item === 'object' && item !== null) {
-                buildSchema(item, arrayPath, schema);
-            }
-        });
-        return schema;
+    } else if (type === 'object' && obj !== null) {
+        node.children = Object.entries(obj).map(([key, value]) =>
+            buildSchemaTree(value, name === 'root' ? '' : path, key)
+        );
     }
 
-    if (typeof obj === 'object') {
-        Object.entries(obj).forEach(([key, value]) => {
-            const currentPath = parentPath ? `${parentPath}.${key}` : key;
-
-            if (Array.isArray(value)) {
-                const arrayPath = `${currentPath}[]`;
-                if (!schema[arrayPath]) {
-                    schema[arrayPath] = { path: arrayPath, type: 'array' };
-                }
-                value.forEach(item => {
-                    if (typeof item === 'object' && item !== null) {
-                        buildSchema(item, arrayPath, schema);
-                    }
-                });
-            } else if (typeof value === 'object' && value !== null) {
-                // We don't necessarily need to track "object" as a selectable field if it's just a container
-                // but for nested paths like MarketingContent.TourID, we need to recurse.
-                buildSchema(value, currentPath, schema);
-            } else {
-                if (!schema[currentPath]) {
-                    schema[currentPath] = { path: currentPath, type: 'scalar' };
-                }
-            }
-        });
-    }
-
-    return schema;
+    return node;
 }
 
 /**
- * Flattens a JSON object into a single-level object based on selected dot-paths.
- * Handles array joining for "Tour-level" export.
+ * Merges two schema trees into one.
  */
-export function flattenTour(data: any, selectedPaths: string[], arraySeparator = '; '): Record<string, any> {
+export function mergeSchemaTrees(base: SchemaNode, extra: SchemaNode): SchemaNode {
+    const node: SchemaNode = { ...base };
+
+    if (extra.type === 'object' || extra.type === 'array') {
+        const baseChildren = base.children || [];
+        const extraChildren = extra.children || [];
+        const mergedChildren = [...baseChildren];
+
+        extraChildren.forEach(extraChild => {
+            const existingIdx = mergedChildren.findIndex(c => c.name === extraChild.name);
+            if (existingIdx !== -1) {
+                mergedChildren[existingIdx] = mergeSchemaTrees(mergedChildren[existingIdx], extraChild);
+            } else {
+                mergedChildren.push(extraChild);
+            }
+        });
+
+        node.children = mergedChildren.length > 0 ? mergedChildren : undefined;
+    }
+
+    return node;
+}
+
+/**
+ * Traverses the schema tree to find all leaf paths (scalars).
+ */
+export function getAllLeafPaths(node: SchemaNode): string[] {
+    if (node.type === 'scalar') {
+        return [node.path];
+    }
+
+    if (node.children) {
+        return node.children.flatMap(child => getAllLeafPaths(child));
+    }
+
+    return [];
+}
+
+/**
+ * Flattens a JSON object based on selected paths and aggregation rules.
+ */
+export function flattenTour(
+    data: any,
+    selectedPaths: string[],
+    rule: ArrayRule = 'join',
+    separator = '; '
+): Record<string, any> {
     const result: Record<string, any> = {};
 
     selectedPaths.forEach(path => {
         const value = getValueByPath(data, path);
 
         if (path.includes('[]')) {
-            // It's an array path. getValueByPath will return an array of values for such paths.
-            if (Array.isArray(value)) {
-                // Flatten nested arrays if any (e.g. DailyList[].AttractionsList[].Name)
-                const flatValues = value.flat(Infinity).filter(v => v !== null && v !== undefined);
-                result[path] = flatValues.join(arraySeparator);
-            } else {
+            if (!Array.isArray(value)) {
                 result[path] = value ?? '';
+                return;
+            }
+
+            const flatValues = value.flat(Infinity).filter(v => v !== null && v !== undefined);
+
+            switch (rule) {
+                case 'count':
+                    result[path] = flatValues.length;
+                    break;
+                case 'first':
+                    result[path] = flatValues[0] ?? '';
+                    break;
+                case 'last':
+                    result[path] = flatValues[flatValues.length - 1] ?? '';
+                    break;
+                case 'json':
+                    result[path] = JSON.stringify(flatValues);
+                    break;
+                case 'join':
+                default:
+                    result[path] = flatValues.join(separator);
+                    break;
             }
         } else {
             result[path] = (typeof value === 'object' && value !== null) ? JSON.stringify(value) : (value ?? '');
@@ -82,9 +140,11 @@ export function flattenTour(data: any, selectedPaths: string[], arraySeparator =
 }
 
 /**
- * Helper to get value(s) from an object using dot-path notation with array support.
+ * Helper to get value(s) from an object using dot-path notation.
  */
 export function getValueByPath(obj: any, path: string): any {
+    if (!obj) return undefined;
+
     const parts = path.split('.');
     let current: any = obj;
 
@@ -100,11 +160,13 @@ export function getValueByPath(obj: any, path: string): any {
             const restPath = parts.slice(i + 1).join('.');
             if (!restPath) return array;
 
-            // Recurse into array elements
-            return array.map(item => getValueByPath(item, restPath));
+            return array.flatMap(item => {
+                const val = getValueByPath(item, restPath);
+                return val === undefined ? [] : [val];
+            });
         }
 
-        if (current === null || current === undefined) return undefined;
+        if (current === null || current === undefined || typeof current !== 'object') return undefined;
         current = current[part];
     }
 

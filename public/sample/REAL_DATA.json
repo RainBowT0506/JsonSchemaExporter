@@ -1,0 +1,87 @@
+{
+    "TourID": "T003",
+    "GroupID": "G003",
+    "IsPreview": false,
+    "TravelType": "Free",
+    "TourName": "金門旅遊｜買機票送住宿｜穿越古今x午後時光｜古色古香古厝民宿自由玩3日（二人成行.贈送下午茶）",
+    "NormGroupID": "88DD0B49-00A8-4755-9F65-9C60269925A4",
+    "ArriveID": "AT-57-9",
+    "Features": "",
+    "BankContent": "",
+    "UpDateTime": "2025-04-10 15:02:04",
+    "Remark": "◆費用包含...",
+    "TourDays": 3,
+    "TourNights": 0,
+    "NormGroupImgNo": "PIC2504-000077",
+    "NormGroupImg": "https://static.liontech.com.tw/cmspic/PIC2504-000077/S_PIC2504-000077.jpg",
+    "NormGroupImgM": "https://static.liontech.com.tw/cmspic/PIC2504-000077/M_PIC2504-000077.jpg",
+    "TDHDesc": "金門三日.金門自由行...",
+    "FeatureSrc": "C",
+    "MarketingContent": {
+        "TourID": "25TI403SB7",
+        "ImgPC": "",
+        "ImgM": "",
+        "Url": "",
+        "Content": ""
+    },
+    "DailyList": [
+        {
+            "DayID": 931170,
+            "Day": 1,
+            "TravelPoint": "台北松山機場 -> 金門尚義機場",
+            "SpecialNote": "推薦行程：金門大橋夜間燈光秀",
+            "Summary": "－－：－－請自行前往機場...",
+            "Breakfast": "敬請自理",
+            "Lunch": "敬請自理",
+            "Dinner": "敬請自理",
+            "HotelDesc": "金門湖峰古厝民宿",
+            "MealList": [
+                {
+                    "Name": "A",
+                    "MealTime": 1
+                },
+                {
+                    "Name": "B",
+                    "MealTime": 4
+                }
+            ],
+            "AttractionsList": [
+                {
+                    "Name": "臺北松山機場",
+                    "VisitWayDesc": "自行前往"
+                }
+            ],
+            "HotelList": [
+                {
+                    "Name": "金門湖峰古厝民宿"
+                }
+            ],
+            "TrafficList": [],
+            "CruiseList": [],
+            "CruiseMealList": [],
+            "CruiseRoomList": []
+        },
+        {
+            "DayID": 931171,
+            "Day": 2,
+            "TravelPoint": "全日自由活動",
+            "SpecialNote": "推薦行程：小金門之旅",
+            "Summary": "在慵懶的午後...",
+            "Breakfast": "敬請自理",
+            "Lunch": "敬請自理",
+            "Dinner": "敬請自理",
+            "HotelDesc": "金門湖峰古厝民宿",
+            "MealList": [],
+            "AttractionsList": [],
+            "HotelList": [],
+            "TrafficList": [],
+            "CruiseList": [],
+            "CruiseMealList": [],
+            "CruiseRoomList": []
+        }
+    ],
+    "EachTripList": [],
+    "TraceId": "dbf6b742fe811f58",
+    "TourBu": null,
+    "TourSource": null
+}
