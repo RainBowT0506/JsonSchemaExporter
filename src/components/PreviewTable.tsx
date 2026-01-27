@@ -52,6 +52,33 @@ export const PreviewTable: React.FC<PreviewTableProps> = ({
         );
     };
 
+    // Group paths by their parent for better header display
+    const groupedPaths = selectedPaths.reduce((acc, path) => {
+        const lastDotIndex = path.lastIndexOf('.');
+        const lastBracketIndex = path.lastIndexOf('[].');
+
+        let groupKey = '';
+        let fieldName = path;
+
+        if (lastBracketIndex !== -1 && lastBracketIndex > lastDotIndex - 2) {
+            // Array field like DailyList[].Day
+            groupKey = path.substring(0, lastBracketIndex + 2);
+            fieldName = path.substring(lastBracketIndex + 3);
+        } else if (lastDotIndex !== -1) {
+            // Object field like MarketingContent.TourID
+            groupKey = path.substring(0, lastDotIndex);
+            fieldName = path.substring(lastDotIndex + 1);
+        }
+
+        if (!acc[groupKey]) {
+            acc[groupKey] = [];
+        }
+        acc[groupKey].push({ fullPath: path, fieldName });
+        return acc;
+    }, {} as Record<string, Array<{ fullPath: string; fieldName: string }>>);
+
+    const groups = Object.entries(groupedPaths);
+
     if (selectedPaths.length === 0) {
         return (
             <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -77,17 +104,33 @@ export const PreviewTable: React.FC<PreviewTableProps> = ({
                 <table className="preview-table">
                     <thead>
                         <tr>
-                            {selectedPaths.map(path => (
-                                <th key={path}>{path}</th>
+                            {groups.map(([groupKey, fields]) => (
+                                <th key={groupKey} colSpan={fields.length} style={{
+                                    background: 'rgba(59, 130, 246, 0.1)',
+                                    borderBottom: '1px solid var(--border-color)',
+                                    fontSize: '0.85rem',
+                                    fontWeight: 600
+                                }}>
+                                    {groupKey || 'Root'}
+                                </th>
                             ))}
+                        </tr>
+                        <tr>
+                            {groups.flatMap(([, fields]) =>
+                                fields.map(({ fieldName, fullPath }) => (
+                                    <th key={fullPath} style={{ fontSize: '0.8rem', fontWeight: 500 }}>{fieldName}</th>
+                                ))
+                            )}
                         </tr>
                     </thead>
                     <tbody>
                         {data.map((row, i) => (
                             <tr key={i}>
-                                {selectedPaths.map(path => (
-                                    <td key={path}>{renderCell(row, path)}</td>
-                                ))}
+                                {groups.flatMap(([, fields]) =>
+                                    fields.map(({ fullPath }) => (
+                                        <td key={fullPath}>{renderCell(row, fullPath)}</td>
+                                    ))
+                                )}
                             </tr>
                         ))}
                     </tbody>

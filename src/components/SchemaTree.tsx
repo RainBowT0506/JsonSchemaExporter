@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { SchemaNode } from '../utils/schema';
-import { ChevronRight, ChevronDown, Square, CheckSquare, Search, Box, Layers, Filter } from 'lucide-react';
+import { ChevronRight, ChevronDown, Square, CheckSquare, MinusSquare, Search, Box, Layers, Filter } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface SchemaTreeProps {
@@ -40,9 +40,11 @@ export const SchemaTree: React.FC<SchemaTreeProps> = ({
         const isExpanded = expanded[node.path] || false;
         const isSelected = selectedPaths.includes(node.path);
 
-        // Check if some children are selected (for indeterminate look, though we use simple checkboxes here)
+        // Check if some children are selected (for indeterminate state)
         const childrenPaths = getAllChildrenPaths(node);
-        const allChildrenSelected = childrenPaths.length > 0 && childrenPaths.every(p => selectedPaths.includes(p));
+        const selectedChildrenCount = childrenPaths.filter(p => selectedPaths.includes(p)).length;
+        const allChildrenSelected = childrenPaths.length > 0 && selectedChildrenCount === childrenPaths.length;
+        const someChildrenSelected = selectedChildrenCount > 0 && selectedChildrenCount < childrenPaths.length;
 
         if (search && !node.path.toLowerCase().includes(search.toLowerCase()) && !childrenPaths.some(p => p.toLowerCase().includes(search.toLowerCase()))) {
             return null;
@@ -77,8 +79,8 @@ export const SchemaTree: React.FC<SchemaTreeProps> = ({
                             }}
                             style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}
                         >
-                            <div style={{ color: (isSelected || allChildrenSelected) ? 'var(--accent-color)' : 'var(--text-secondary)' }}>
-                                {(isSelected || allChildrenSelected) ? <CheckSquare size={18} /> : <Square size={18} />}
+                            <div style={{ color: (isSelected || allChildrenSelected) ? 'var(--accent-color)' : someChildrenSelected ? 'var(--warning-color)' : 'var(--text-secondary)' }}>
+                                {someChildrenSelected ? <MinusSquare size={18} /> : (isSelected || allChildrenSelected) ? <CheckSquare size={18} /> : <Square size={18} />}
                             </div>
                             <span style={{
                                 fontWeight: isSelected ? 600 : 400,

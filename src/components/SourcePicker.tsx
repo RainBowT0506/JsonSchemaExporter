@@ -71,7 +71,7 @@ export const SourcePicker: React.FC<SourcePickerProps> = ({ onFilesSelected, fil
                 }}>
                     <UploadCloud size={40} />
                 </div>
-                <h1 style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>Trip Schema Exporter</h1>
+                <h1 style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>Json Schema Exporter</h1>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '1.1rem', maxWidth: '600px', margin: '0 auto' }}>
                     Select a folder containing multiple Tour JSON files.
                     We will sample the first {PREVIEW_SAMPLE_SIZE} files for instant preview and schema analysis.
