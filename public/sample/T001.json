@@ -1,0 +1,33 @@
+{
+  "TourID": "T001",
+  "TourName": "Taipei Gold Mountain Tour",
+  "NormGroupID": "G123",
+  "TourDays": 3,
+  "TDHDesc": "Beautiful scenery and local food",
+  "MarketingContent": {
+    "TourID": "M_T001",
+    "Description": "Experience the best of Taipei"
+  },
+  "DailyList": [
+    {
+      "Day": 1,
+      "TravelPoint": "Taipei -> Kinmen",
+      "AttractionsList": [
+        { "Name": "Kinmen Airport" },
+        { "Name": "Jingwu Wine Cellar" }
+      ]
+    },
+    {
+      "Day": 2,
+      "TravelPoint": "Free Activity",
+      "AttractionsList": []
+    },
+    {
+      "Day": 3,
+      "TravelPoint": "Return to Taipei",
+      "AttractionsList": [
+        { "Name": "Jiangong Islet" }
+      ]
+    }
+  ]
+}

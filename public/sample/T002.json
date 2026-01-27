@@ -1,0 +1,23 @@
+{
+    "TourID": "T002",
+    "TourName": "Hualien Adventure",
+    "TourDays": 2,
+    "MarketingContent": {
+        "TourID": "M_T002"
+    },
+    "DailyList": [
+        {
+            "Day": 1,
+            "TravelPoint": "Taipei -> Hualien",
+            "AttractionsList": [
+                {
+                    "Name": "Taroko Gorge"
+                }
+            ]
+        },
+        {
+            "Day": 2,
+            "TravelPoint": "Return to Taipei"
+        }
+    ]
+}
