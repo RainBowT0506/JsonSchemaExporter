@@ -1,12 +1,13 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { SourcePicker } from './components/SourcePicker';
 import { SchemaTree } from './components/SchemaTree';
 import { PreviewTable } from './components/PreviewTable';
 import { ExportSettings } from './components/ExportSettings';
-import type { ArrayRule } from './components/ExportSettings';
+import type { FilterType, ArrayRule } from './components/ExportSettings';
 import { NestedDetail } from './components/NestedDetail';
 import { buildSchemaTree, mergeSchemaTrees, flattenTour, getAllLeafPaths, filterFlattenedData } from './utils/schema';
-import { RefreshCcw, Download, Languages } from 'lucide-react';
+import { buildBreadcrumbTree, matchBreadcrumb } from './utils/breadcrumb';
+import { RefreshCcw, Download, Languages, GripHorizontal } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
 import Papa from 'papaparse';
 
@@ -26,16 +27,33 @@ function App() {
   const [lang, setLang] = useState<'zh' | 'en'>(() => (localStorage.getItem('lang') as 'zh' | 'en') || 'zh');
 
   // Filter State
+  const [filterType, setFilterType] = useState<FilterType>('keyword');
+
+  // Keyword Filter
   const [filterKeyword, setFilterKeyword] = useState('');
   const [filterColumn, setFilterColumn] = useState('ALL');
   const [filterMode, setFilterMode] = useState<'contains' | 'equals'>('contains');
   const [filterCaseSensitive, setFilterCaseSensitive] = useState(false);
+
+  // Breadcrumb Filter
+  const [breadcrumbSourcePath, setBreadcrumbSourcePath] = useState('queries.getCommBreadcrumb');
+  const [breadcrumbPath, setBreadcrumbPath] = useState<string[]>([]);
+
+  // Metrics
   const [filteredCount, setFilteredCount] = useState<number | undefined>(undefined);
   const [processedCount, setProcessedCount] = useState<number | undefined>(undefined);
 
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [inspector, setInspector] = useState<{ data: any; path: string; type: 'object' | 'array' } | null>(null);
+
+  // Layout State
+  const [previewHeightPercent, setPreviewHeightPercent] = useState(() => {
+    const saved = localStorage.getItem('previewHeightPercent');
+    return saved ? parseFloat(saved) : 30; // Default 30%
+  });
+  const splitterRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Persistence for non-path settings
   useEffect(() => {
@@ -56,6 +74,50 @@ function App() {
     });
     return merged;
   }, [files]);
+
+  // Helper to scan all files for Indexing (Breadcrumb)
+  const scanAllFiles = async () => {
+    setIsExporting(true); // Reuse export state to show busy
+    const updatedFiles = [...files];
+    let changed = false;
+
+    // Parse all files that define content (if missing)
+    await Promise.all(updatedFiles.map(async (f) => {
+      if (!f.isAvailable) return;
+      if (!f.content) {
+        try {
+          const text = await f.file.text();
+          f.content = JSON.parse(text);
+          changed = true;
+        } catch (e) {
+          console.error('Lazy parse failed', f.name);
+        }
+      }
+    }));
+
+    setIsExporting(false);
+    if (changed) {
+      setFiles(updatedFiles);
+    }
+  };
+
+  // Trigger scan when switching to Breadcrumb mode
+  useEffect(() => {
+    if (filterType === 'breadcrumb') {
+      // If we have many files unparsed, scan them.
+      // Simple check: if > 5 files and only 5 have content.
+      const hasUnparsed = files.some(f => f.isAvailable && !f.content);
+      if (hasUnparsed) {
+        scanAllFiles();
+      }
+    }
+  }, [filterType, files]);
+
+  // Derive Breadcrumb Tree
+  const breadcrumbTree = useMemo(() => {
+    // Now uses all available files since we scan them.
+    return buildBreadcrumbTree(files.filter(f => f.isAvailable), breadcrumbSourcePath);
+  }, [files, breadcrumbSourcePath]);
 
   // Default select all fields when schema is first ready
   useEffect(() => {
@@ -116,14 +178,26 @@ function App() {
 
   const previewData = useMemo(() => {
     const samples = files.filter(f => f.isSample && f.isAvailable).map(f => f.content);
-    if (!filterKeyword) return samples;
 
-    // Apply Filter to Samples
-    return samples.filter(item => {
-      const flattened = flattenTour(item, selectedPaths, arrayRule);
-      return filterFlattenedData(flattened, filterKeyword, filterColumn, filterMode, filterCaseSensitive);
-    });
-  }, [files, filterKeyword, filterColumn, filterMode, filterCaseSensitive, selectedPaths, arrayRule]);
+    // 1. Keyword Filter
+    if (filterType === 'keyword') {
+      if (!filterKeyword) return samples;
+      return samples.filter(item => {
+        const flattened = flattenTour(item, selectedPaths, arrayRule);
+        return filterFlattenedData(flattened, filterKeyword, filterColumn, filterMode, filterCaseSensitive);
+      });
+    }
+
+    // 2. Breadcrumb Filter
+    if (filterType === 'breadcrumb') {
+      if (!breadcrumbPath[0]) return samples; // No L1 selected
+      return samples.filter(item => {
+        return matchBreadcrumb(item, breadcrumbSourcePath, breadcrumbPath);
+      });
+    }
+
+    return samples;
+  }, [files, filterType, filterKeyword, filterColumn, filterMode, filterCaseSensitive, breadcrumbPath, breadcrumbSourcePath, selectedPaths, arrayRule]);
 
   const handleExport = async () => {
     setIsExporting(true);
@@ -146,6 +220,14 @@ function App() {
             const text = await f.file.text();
             content = JSON.parse(text);
           }
+
+          // Check Pre-filter (Raw Data Check for Breadcrumb)
+          if (filterType === 'breadcrumb') {
+            if (breadcrumbPath[0] && !matchBreadcrumb(content, breadcrumbSourcePath, breadcrumbPath)) {
+              return null;
+            }
+          }
+
           const flattened = flattenTour(content, selectedPaths, arrayRule);
           flattened['TourID_Meta'] = content.TourID || 'UNKNOWN';
           flattened['SourceFile'] = f.name;
@@ -156,10 +238,13 @@ function App() {
         }
       }));
 
-      // Apply Filter
+      // Apply Post-filter (Flattened Data Check for Keyword)
       const validItems = processedChunk.filter((item: any) => {
         if (!item) return false;
-        return filterFlattenedData(item, filterKeyword, filterColumn, filterMode, filterCaseSensitive);
+        if (filterType === 'keyword') {
+          return filterFlattenedData(item, filterKeyword, filterColumn, filterMode, filterCaseSensitive);
+        }
+        return true; // Breadcrumb was checked before flattening
       });
 
       results.push(...validItems);
@@ -194,6 +279,30 @@ function App() {
     setExportProgress(0);
   };
 
+  // Resizable Split Pane Logic
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const handleMouseMove = (e: MouseEvent) => {
+    if (!containerRef.current) return;
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const relativeY = e.clientY - containerRect.top;
+    const newPercentage = (relativeY / containerRect.height) * 100;
+    // Clamp between 10% and 80%
+    const clamped = Math.max(10, Math.min(80, newPercentage));
+    setPreviewHeightPercent(clamped);
+  };
+
+  const handleMouseUp = () => {
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
+    localStorage.setItem('previewHeightPercent', String(previewHeightPercent));
+  };
+
+
   if (files.length === 0) {
     return (
       <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -208,7 +317,7 @@ function App() {
 
   return (
     <div className="container" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <header style={{ marginBottom: '2rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <header style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <div style={{ width: '40px', height: '40px', background: 'var(--accent-color)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>T</div>
           <div>
@@ -245,39 +354,75 @@ function App() {
           )}
         </aside>
 
-        <section className="preview-section">
-          <PreviewTable
-            data={previewData}
-            selectedPaths={selectedPaths}
-            onInspect={(data, path, type) => setInspector({ data, path, type })}
-          />
-        </section>
+        {/* Main Content Area with Split Pane */}
+        <div className="main-content" ref={containerRef} style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
 
-        <section className="export-section">
-          <ExportSettings
-            totalFiles={files.filter(f => f.isAvailable).length}
-            arrayRule={arrayRule}
-            onRuleChange={setArrayRule}
-            format={exportFormat}
-            onFormatChange={setExportFormat}
-            onExport={handleExport}
-            isExporting={isExporting}
-            exportProgress={exportProgress}
-            lang={lang}
+          {/* Top Pane: Preview (Resizable) */}
+          <section className="preview-section" style={{ height: `${previewHeightPercent}%`, minHeight: '100px', overflow: 'hidden' }}>
+            <PreviewTable
+              data={previewData}
+              selectedPaths={selectedPaths}
+              onInspect={(data, path, type) => setInspector({ data, path, type })}
+            />
+          </section>
 
-            filterKeyword={filterKeyword}
-            onFilterKeywordChange={setFilterKeyword}
-            filterColumn={filterColumn}
-            onFilterColumnChange={setFilterColumn}
-            filterMode={filterMode}
-            onMatchModeChange={setFilterMode}
-            filterCaseSensitive={filterCaseSensitive}
-            onCaseSensitiveChange={setFilterCaseSensitive}
-            availableColumns={selectedPaths}
-            filteredCount={filteredCount}
-            processedCount={processedCount}
-          />
-        </section>
+          {/* Splitter Handle */}
+          <div
+            ref={splitterRef}
+            onMouseDown={handleMouseDown}
+            style={{
+              height: '12px',
+              background: 'var(--surface-color)',
+              borderTop: '1px solid var(--border-color)',
+              borderBottom: '1px solid var(--border-color)',
+              cursor: 'row-resize',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              zIndex: 10
+            }}
+          >
+            <GripHorizontal size={14} color="var(--text-secondary)" />
+          </div>
+
+          {/* Bottom Pane: Settings (Fills remaining) */}
+          <section className="export-section" style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            <ExportSettings
+              totalFiles={files.filter(f => f.isAvailable).length}
+              arrayRule={arrayRule}
+              onRuleChange={setArrayRule}
+              format={exportFormat}
+              onFormatChange={setExportFormat}
+              onExport={handleExport}
+              isExporting={isExporting}
+              exportProgress={exportProgress}
+              lang={lang}
+
+              filterType={filterType}
+              onFilterTypeChange={setFilterType}
+
+              filterKeyword={filterKeyword}
+              onFilterKeywordChange={setFilterKeyword}
+              filterColumn={filterColumn}
+              onFilterColumnChange={setFilterColumn}
+              filterMode={filterMode}
+              onMatchModeChange={setFilterMode}
+              filterCaseSensitive={filterCaseSensitive}
+              onCaseSensitiveChange={setFilterCaseSensitive}
+
+              breadcrumbTree={breadcrumbTree}
+              breadcrumbPath={breadcrumbPath}
+              onBreadcrumbPathChange={setBreadcrumbPath}
+              breadcrumbSourcePath={breadcrumbSourcePath}
+              onBreadcrumbSourcePathChange={setBreadcrumbSourcePath}
+
+              availableColumns={selectedPaths}
+              filteredCount={filteredCount}
+              processedCount={processedCount}
+            />
+          </section>
+        </div>
       </div>
 
       <AnimatePresence>

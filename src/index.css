@@ -113,14 +113,13 @@ h3 {
 .dashboard {
   display: grid;
   grid-template-columns: 350px 1fr;
-  grid-template-rows: 1fr 300px;
+  grid-template-rows: 1fr;
   gap: 1.5rem;
   height: calc(100vh - 180px);
   width: 100%;
 }
 
 .explorer-section {
-  grid-row: 1 / span 2;
   overflow: hidden;
 }
 

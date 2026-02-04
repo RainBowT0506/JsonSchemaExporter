@@ -1,7 +1,9 @@
-import React from 'react';
-import { Settings, Download, AlertCircle, FileText, Database, HelpCircle, Filter, Search } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { Settings, Download, AlertCircle, FileText, Database, HelpCircle, Filter, Search, ListTree, ChevronRight } from 'lucide-react';
+import type { BreadcrumbTree, BreadcrumbOption } from '../utils/breadcrumb';
 
 export type ArrayRule = 'join' | 'count' | 'first' | 'last' | 'json';
+export type FilterType = 'keyword' | 'breadcrumb';
 
 interface ExportSettingsProps {
     arrayRule: ArrayRule;
@@ -15,6 +17,10 @@ interface ExportSettingsProps {
     lang: 'zh' | 'en';
 
     // Filter Props
+    filterType: FilterType;
+    onFilterTypeChange: (type: FilterType) => void;
+
+    // Keyword Filter
     filterKeyword: string;
     onFilterKeywordChange: (v: string) => void;
     filterColumn: string;
@@ -23,6 +29,14 @@ interface ExportSettingsProps {
     onMatchModeChange: (v: 'contains' | 'equals') => void;
     filterCaseSensitive: boolean;
     onCaseSensitiveChange: (v: boolean) => void;
+
+    // Breadcrumb Filter
+    breadcrumbTree: BreadcrumbTree;
+    breadcrumbPath: string[];
+    onBreadcrumbPathChange: (path: string[]) => void;
+    breadcrumbSourcePath: string;
+    onBreadcrumbSourcePathChange: (v: string) => void;
+
     availableColumns: string[];
     filteredCount?: number;
     processedCount?: number;
@@ -36,12 +50,15 @@ const T = {
         summary: '摘要',
         exporting: '匯出中...',
         button: '現在匯出結果',
-        filterTitle: '關鍵字篩選 (Keyword Filter)',
+        filterTitle: '資料過濾器',
+        tabKeyword: '關鍵字過濾',
+        tabBreadcrumb: '階層式過濾',
         filterPlaceholder: '輸入關鍵字...',
         allColumns: '全部欄位 (All Columns)',
         matchContains: '包含 (Contains)',
         matchEquals: '完全相等 (Equals)',
         caseSensitive: '區分大小寫',
+        sourcePath: '資料來源路徑 (Array Path)',
         ruleHelp: {
             join: '將陣列元素結合為單一字串，以分號 (;) 分隔',
             count: '僅記錄陣列中的元素數量',
@@ -57,12 +74,15 @@ const T = {
         summary: 'Summary',
         exporting: 'Exporting...',
         button: 'Export Results Now',
-        filterTitle: 'Keyword Filter',
+        filterTitle: 'Data Filtering',
+        tabKeyword: 'Keyword Filter',
+        tabBreadcrumb: 'Breadcrumb Filter',
         filterPlaceholder: 'Enter keyword...',
         allColumns: 'All Columns',
         matchContains: 'Contains',
         matchEquals: 'Equals',
         caseSensitive: 'Case Sensitive',
+        sourcePath: 'Source Data Path',
         ruleHelp: {
             join: 'Combine array elements into a single string separated by (;)',
             count: 'Record only the number of elements in the array',
@@ -83,6 +103,8 @@ export const ExportSettings: React.FC<ExportSettingsProps> = ({
     exportProgress,
     totalFiles,
     lang,
+    filterType,
+    onFilterTypeChange,
     filterKeyword,
     onFilterKeywordChange,
     filterColumn,
@@ -91,11 +113,60 @@ export const ExportSettings: React.FC<ExportSettingsProps> = ({
     onMatchModeChange,
     filterCaseSensitive,
     onCaseSensitiveChange,
+    breadcrumbTree,
+    breadcrumbPath,
+    onBreadcrumbPathChange,
+    breadcrumbSourcePath,
+    onBreadcrumbSourcePathChange,
     availableColumns,
     filteredCount,
     processedCount
 }) => {
     const texts = T[lang];
+
+    // Calculate options for the next level
+    // We always show N+1 dropdowns where N is current path length
+    // But practically, we show existing levels + 1 if there are children.
+
+    const levels = useMemo(() => {
+        const result: { options: BreadcrumbOption[], value: string }[] = [];
+
+        let currentOptions = Array.from(breadcrumbTree.values());
+
+        // Always add the first level
+        if (currentOptions.length > 0) {
+            result.push({
+                options: currentOptions,
+                value: breadcrumbPath[0] || ''
+            });
+        }
+
+        // Walk down the path to add subsequent levels
+        for (let i = 0; i < breadcrumbPath.length; i++) {
+            const code = breadcrumbPath[i];
+            if (!code) break;
+
+            const selectedNode = currentOptions.find(opt => opt.code === code);
+            if (selectedNode && selectedNode.children.size > 0) {
+                currentOptions = Array.from(selectedNode.children.values());
+                result.push({
+                    options: currentOptions,
+                    value: breadcrumbPath[i + 1] || '' // The next value in path, or empty for the new dropdown
+                });
+            } else {
+                break;
+            }
+        }
+        return result;
+    }, [breadcrumbTree, breadcrumbPath]);
+
+    const handleLevelChange = (levelIndex: number, newValue: string) => {
+        const newPath = [...breadcrumbPath];
+        newPath[levelIndex] = newValue;
+        // Truncate any deeper selections if we change a parent
+        const truncatedPath = newPath.slice(0, levelIndex + 1);
+        onBreadcrumbPathChange(truncatedPath);
+    };
 
     return (
         <div className="export-panel glass-panel" style={{ height: '100%', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -105,59 +176,145 @@ export const ExportSettings: React.FC<ExportSettingsProps> = ({
 
             <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, display: 'flex', flexDirection: 'column', gap: '1.5rem', paddingRight: '4px' }}>
                 {/* Filter Section */}
-                <div style={{ padding: '1rem', background: 'var(--surface-color)', borderRadius: '8px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <Filter size={14} /> {texts.filterTitle}
-                    </label>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        <div style={{ position: 'relative', flex: 1 }}>
-                            <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-                            <input
-                                type="text"
-                                value={filterKeyword}
-                                onChange={(e) => onFilterKeywordChange(e.target.value)}
-                                placeholder={texts.filterPlaceholder}
-                                style={{ width: '100%', padding: '8px 12px 8px 32px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-color)', borderRadius: '6px', color: 'white', fontSize: '0.9rem' }}
-                            />
-                        </div>
+                <div style={{ padding: '0', background: 'var(--surface-color)', borderRadius: '8px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0 }}>
+                    {/* Tabs */}
+                    <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)' }}>
+                        <button
+                            onClick={() => onFilterTypeChange('keyword')}
+                            style={{
+                                flex: 1,
+                                padding: '10px',
+                                fontSize: '0.85rem',
+                                background: filterType === 'keyword' ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
+                                color: filterType === 'keyword' ? 'var(--accent-color)' : 'var(--text-secondary)',
+                                fontWeight: filterType === 'keyword' ? 600 : 400,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                borderRight: '1px solid var(--border-color)',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            <Filter size={14} /> {texts.tabKeyword}
+                        </button>
+                        <button
+                            onClick={() => onFilterTypeChange('breadcrumb')}
+                            style={{
+                                flex: 1,
+                                padding: '10px',
+                                fontSize: '0.85rem',
+                                background: filterType === 'breadcrumb' ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
+                                color: filterType === 'breadcrumb' ? 'var(--accent-color)' : 'var(--text-secondary)',
+                                fontWeight: filterType === 'breadcrumb' ? 600 : 400,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            <ListTree size={14} /> {texts.tabBreadcrumb}
+                        </button>
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '8px' }}>
-                        <select
-                            value={filterColumn}
-                            onChange={(e) => onFilterColumnChange(e.target.value)}
-                            style={{ padding: '6px 10px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-color)', borderRadius: '6px', color: 'white', fontSize: '0.85rem' }}
-                        >
-                            <option value="ALL">{texts.allColumns}</option>
-                            {availableColumns.map(col => (
-                                <option key={col} value={col}>{col}</option>
-                            ))}
-                        </select>
+                    {/* Filter Content */}
+                    <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        {filterType === 'keyword' ? (
+                            <>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <div style={{ position: 'relative', flex: 1 }}>
+                                        <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
+                                        <input
+                                            type="text"
+                                            value={filterKeyword}
+                                            onChange={(e) => onFilterKeywordChange(e.target.value)}
+                                            placeholder={texts.filterPlaceholder}
+                                            style={{ width: '100%', padding: '8px 12px 8px 32px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-color)', borderRadius: '6px', color: 'white', fontSize: '0.9rem' }}
+                                        />
+                                    </div>
+                                </div>
 
-                        <select
-                            value={filterMode}
-                            onChange={(e) => onMatchModeChange(e.target.value as 'contains' | 'equals')}
-                            style={{ padding: '6px 10px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-color)', borderRadius: '6px', color: 'white', fontSize: '0.85rem' }}
-                        >
-                            <option value="contains">{texts.matchContains}</option>
-                            <option value="equals">{texts.matchEquals}</option>
-                        </select>
-                    </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '8px' }}>
+                                    <select
+                                        value={filterColumn}
+                                        onChange={(e) => onFilterColumnChange(e.target.value)}
+                                        style={{ padding: '6px 10px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-color)', borderRadius: '6px', color: 'white', fontSize: '0.85rem' }}
+                                    >
+                                        <option value="ALL">{texts.allColumns}</option>
+                                        {availableColumns.map(col => (
+                                            <option key={col} value={col}>{col}</option>
+                                        ))}
+                                    </select>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer', userSelect: 'none' }}>
-                            <input
-                                type="checkbox"
-                                checked={filterCaseSensitive}
-                                onChange={(e) => onCaseSensitiveChange(e.target.checked)}
-                                style={{ accentColor: 'var(--accent-color)' }}
-                            />
-                            <span style={{ color: filterCaseSensitive ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{texts.caseSensitive}</span>
-                        </label>
+                                    <select
+                                        value={filterMode}
+                                        onChange={(e) => onMatchModeChange(e.target.value as 'contains' | 'equals')}
+                                        style={{ padding: '6px 10px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-color)', borderRadius: '6px', color: 'white', fontSize: '0.85rem' }}
+                                    >
+                                        <option value="contains">{texts.matchContains}</option>
+                                        <option value="equals">{texts.matchEquals}</option>
+                                    </select>
+                                </div>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer', userSelect: 'none' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={filterCaseSensitive}
+                                            onChange={(e) => onCaseSensitiveChange(e.target.checked)}
+                                            style={{ accentColor: 'var(--accent-color)' }}
+                                        />
+                                        <span style={{ color: filterCaseSensitive ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{texts.caseSensitive}</span>
+                                    </label>
+                                </div>
+                            </>
+                        ) : (
+                            // Breadcrumb Filter UI
+                            <>
+                                <div style={{ marginBottom: '4px' }}>
+                                    <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                                        {texts.sourcePath}
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={breadcrumbSourcePath}
+                                        onChange={(e) => onBreadcrumbSourcePathChange(e.target.value)}
+                                        style={{ width: '100%', padding: '6px 10px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-color)', borderRadius: '6px', color: 'var(--text-primary)', fontSize: '0.8rem', fontFamily: 'monospace' }}
+                                    />
+                                </div>
+
+                                {levels.map((level, idx) => (
+                                    <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '4px', animation: 'fadeIn 0.2s' }}>
+                                        {idx > 0 && <ChevronRight size={14} className="text-secondary" style={{ flexShrink: 0 }} />}
+                                        <select
+                                            value={level.value}
+                                            onChange={(e) => handleLevelChange(idx, e.target.value)}
+                                            style={{
+                                                padding: '8px 12px',
+                                                background: 'rgba(0,0,0,0.2)',
+                                                border: '1px solid var(--border-color)',
+                                                borderRadius: '6px',
+                                                color: 'white',
+                                                fontSize: '0.9rem',
+                                                width: '100%'
+                                            }}
+                                        >
+                                            <option value="">{lang === 'zh' ? `選擇 Level ${idx + 1}...` : `Select Level ${idx + 1}...`}</option>
+                                            {level.options.map(opt => (
+                                                <option key={opt.code} value={opt.code}>
+                                                    {opt.name} ({opt.code})
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                ))}
+
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textAlign: 'right' }}>
+                                    {breadcrumbPath.length > 0 && breadcrumbPath[0] !== '' && (
+                                        <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => onBreadcrumbPathChange([])}>Clear Filter</span>
+                                    )}
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', flexShrink: 0 }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                         <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                             {texts.arrayRule}
@@ -202,14 +359,14 @@ export const ExportSettings: React.FC<ExportSettingsProps> = ({
                         <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{texts.format}</label>
                         <div style={{ display: 'flex', gap: '8px' }}>
                             <button
-                                className={`btn-secondary ${format === 'csv' ? 'border-accent' : ''}`}
+                                className={`btn - secondary ${format === 'csv' ? 'border-accent' : ''} `}
                                 style={{ flex: 1, padding: '8px', fontSize: '0.85rem', borderColor: format === 'csv' ? 'var(--accent-color)' : 'var(--border-color)' }}
                                 onClick={() => onFormatChange('csv')}
                             >
                                 <FileText size={14} /> CSV
                             </button>
                             <button
-                                className={`btn-secondary ${format === 'json' ? 'border-accent' : ''}`}
+                                className={`btn - secondary ${format === 'json' ? 'border-accent' : ''} `}
                                 style={{ flex: 1, padding: '8px', fontSize: '0.85rem', borderColor: format === 'json' ? 'var(--accent-color)' : 'var(--border-color)' }}
                                 onClick={() => onFormatChange('json')}
                             >
@@ -219,13 +376,13 @@ export const ExportSettings: React.FC<ExportSettingsProps> = ({
                     </div>
                 </div>
 
-                <div style={{ background: 'rgba(59, 130, 246, 0.05)', borderRadius: '12px', padding: '1rem', border: '1px solid var(--border-color)', display: 'flex', gap: '12px' }}>
+                <div style={{ background: 'rgba(59, 130, 246, 0.05)', borderRadius: '12px', padding: '1rem', border: '1px solid var(--border-color)', display: 'flex', gap: '12px', flexShrink: 0 }}>
                     <AlertCircle size={20} className="text-accent" style={{ flexShrink: 0 }} />
                     <div style={{ fontSize: '0.85rem' }}>
                         <strong>{texts.summary}:</strong> {lang === 'zh' ? (
-                            <>您正在匯出 <strong>{totalFiles}</strong> 筆資料。{filterKeyword && <>包含關鍵字 <strong>[{filterKeyword}]</strong> 的</>}陣列欄位將使用 <strong>{arrayRule}</strong> 規則處理。</>
+                            <>您正在匯出 <strong>{totalFiles}</strong> 筆資料。</>
                         ) : (
-                            <>You are exporting <strong>{totalFiles}</strong> tours.{filterKeyword && <> Arrays matching <strong>[{filterKeyword}]</strong></>} Array fields will be processed using the <strong>{arrayRule}</strong> rule.</>
+                            <>You are exporting <strong>{totalFiles}</strong> tours.</>
                         )}
                         {(filteredCount !== undefined || processedCount !== undefined) && (
                             <div style={{ marginTop: '8px', fontWeight: 'bold' }}>
@@ -248,12 +405,12 @@ export const ExportSettings: React.FC<ExportSettingsProps> = ({
                         left: 0,
                         top: 0,
                         bottom: 0,
-                        width: `${exportProgress}%`,
+                        width: `${exportProgress}% `,
                         background: 'rgba(255, 255, 255, 0.1)',
                         transition: 'width 0.3s ease'
                     }} />
                 )}
-                <Download size={20} /> {isExporting ? `${texts.exporting} ${exportProgress}%` : texts.button}
+                <Download size={20} /> {isExporting ? `${texts.exporting} ${exportProgress}% ` : texts.button}
             </button>
         </div>
     );
