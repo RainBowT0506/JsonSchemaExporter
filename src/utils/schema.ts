@@ -193,3 +193,45 @@ export function getValueByPath(obj: any, path: string): any {
 
     return current;
 }
+
+/**
+ * Checks if a flattened data object matches the filter criteria.
+ */
+export function filterFlattenedData(
+    flattened: Record<string, any>,
+    keyword: string,
+    column: string,
+    mode: 'contains' | 'equals',
+    caseSensitive: boolean
+): boolean {
+    if (!keyword) return true;
+
+    // Determine target values to search
+    const targetValues: any[] = [];
+    if (!column || column === 'ALL') {
+        targetValues.push(...Object.values(flattened));
+    } else {
+        if (flattened[column] !== undefined) {
+            targetValues.push(flattened[column]);
+        }
+    }
+
+    // Check function
+    const check = (val: any) => {
+        // "If field value is null/undefined treat as no match"
+        if (val === null || val === undefined) return false;
+
+        // "If field value is not string... convert to string"
+        const strVal = String(val);
+
+        const k = caseSensitive ? keyword : keyword.toLowerCase();
+        const v = caseSensitive ? strVal : strVal.toLowerCase();
+
+        if (mode === 'equals') {
+            return v === k;
+        }
+        return v.includes(k);
+    };
+
+    return targetValues.some(check);
+}

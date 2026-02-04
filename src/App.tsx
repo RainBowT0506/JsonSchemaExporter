@@ -5,7 +5,7 @@ import { PreviewTable } from './components/PreviewTable';
 import { ExportSettings } from './components/ExportSettings';
 import type { ArrayRule } from './components/ExportSettings';
 import { NestedDetail } from './components/NestedDetail';
-import { buildSchemaTree, mergeSchemaTrees, flattenTour, getAllLeafPaths } from './utils/schema';
+import { buildSchemaTree, mergeSchemaTrees, flattenTour, getAllLeafPaths, filterFlattenedData } from './utils/schema';
 import { RefreshCcw, Download, Languages } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
 import Papa from 'papaparse';
@@ -24,6 +24,15 @@ function App() {
   const [arrayRule, setArrayRule] = useState<ArrayRule>(() => (localStorage.getItem('arrayRule') as ArrayRule) || 'join');
   const [exportFormat, setExportFormat] = useState<'csv' | 'json'>(() => (localStorage.getItem('exportFormat') as 'csv' | 'json') || 'csv');
   const [lang, setLang] = useState<'zh' | 'en'>(() => (localStorage.getItem('lang') as 'zh' | 'en') || 'zh');
+
+  // Filter State
+  const [filterKeyword, setFilterKeyword] = useState('');
+  const [filterColumn, setFilterColumn] = useState('ALL');
+  const [filterMode, setFilterMode] = useState<'contains' | 'equals'>('contains');
+  const [filterCaseSensitive, setFilterCaseSensitive] = useState(false);
+  const [filteredCount, setFilteredCount] = useState<number | undefined>(undefined);
+  const [processedCount, setProcessedCount] = useState<number | undefined>(undefined);
+
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [inspector, setInspector] = useState<{ data: any; path: string; type: 'object' | 'array' } | null>(null);
@@ -106,12 +115,22 @@ function App() {
   };
 
   const previewData = useMemo(() => {
-    return files.filter(f => f.isSample && f.isAvailable).map(f => f.content);
-  }, [files]);
+    const samples = files.filter(f => f.isSample && f.isAvailable).map(f => f.content);
+    if (!filterKeyword) return samples;
+
+    // Apply Filter to Samples
+    return samples.filter(item => {
+      const flattened = flattenTour(item, selectedPaths, arrayRule);
+      return filterFlattenedData(flattened, filterKeyword, filterColumn, filterMode, filterCaseSensitive);
+    });
+  }, [files, filterKeyword, filterColumn, filterMode, filterCaseSensitive, selectedPaths, arrayRule]);
 
   const handleExport = async () => {
     setIsExporting(true);
     setExportProgress(0);
+    setFilteredCount(0);
+    setProcessedCount(0);
+
     const parsable = files.filter(f => f.isAvailable);
     const total = parsable.length;
     const results: any[] = [];
@@ -137,7 +156,16 @@ function App() {
         }
       }));
 
-      results.push(...processedChunk.filter(Boolean));
+      // Apply Filter
+      const validItems = processedChunk.filter((item: any) => {
+        if (!item) return false;
+        return filterFlattenedData(item, filterKeyword, filterColumn, filterMode, filterCaseSensitive);
+      });
+
+      results.push(...validItems);
+      setFilteredCount(prev => (prev || 0) + validItems.length);
+      setProcessedCount(prev => (prev || 0) + chunk.length);
+
       setExportProgress(Math.min(100, Math.round(((i + chunk.length) / total) * 100)));
       // Yield to main thread
       await new Promise(resolve => setTimeout(resolve, 0));
@@ -236,6 +264,18 @@ function App() {
             isExporting={isExporting}
             exportProgress={exportProgress}
             lang={lang}
+
+            filterKeyword={filterKeyword}
+            onFilterKeywordChange={setFilterKeyword}
+            filterColumn={filterColumn}
+            onFilterColumnChange={setFilterColumn}
+            filterMode={filterMode}
+            onMatchModeChange={setFilterMode}
+            filterCaseSensitive={filterCaseSensitive}
+            onCaseSensitiveChange={setFilterCaseSensitive}
+            availableColumns={selectedPaths}
+            filteredCount={filteredCount}
+            processedCount={processedCount}
           />
         </section>
       </div>
