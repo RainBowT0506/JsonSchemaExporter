@@ -42,8 +42,10 @@ function App() {
   // Metrics
   const [filteredCount, setFilteredCount] = useState<number | undefined>(undefined);
   const [processedCount, setProcessedCount] = useState<number | undefined>(undefined);
+  const [schemaSourceCount, setSchemaSourceCount] = useState<number>(0);
 
   const [isExporting, setIsExporting] = useState(false);
+  const [isScanning, setIsScanning] = useState(false); // Scanning feedback
   const [exportProgress, setExportProgress] = useState(0);
   const [inspector, setInspector] = useState<{ data: any; path: string; type: 'object' | 'array' } | null>(null);
 
@@ -62,56 +64,118 @@ function App() {
     localStorage.setItem('lang', lang);
   }, [arrayRule, exportFormat, lang]);
 
-  // Derive Schema Tree from sample files
+  // Derive Schema Tree from valid files (Dynamic)
+  // Derive Schema Tree from valid files (Dynamic with Distributed Sampling)
   const schemaTree = useMemo(() => {
-    const samples = files.filter(f => f.isSample && f.isAvailable);
-    if (samples.length === 0) return null;
+    // Collect ALL matches first
+    const matches: any[] = [];
 
-    let merged = buildSchemaTree(samples[0].content);
-    samples.slice(1).forEach(f => {
-      const nextPlan = buildSchemaTree(f.content);
+    for (const f of files) {
+      if (!f.isAvailable || !f.content) continue;
+
+      let shouldInclude = true;
+      if (filterType === 'breadcrumb' && breadcrumbPath[0]) {
+        shouldInclude = matchBreadcrumb(f.content, breadcrumbSourcePath, breadcrumbPath);
+      }
+
+      if (shouldInclude) {
+        matches.push(f.content);
+      }
+    }
+
+    if (matches.length === 0) return null;
+
+    // Distributed Sampling:
+    // Instead of taking the first N, we take N samples distributed across the set.
+    // This ensures we capture schema variations if the file list is sorted by type.
+    const MAX_SCHEMA_SAMPLES = 1000; // Increased to capture more unique fields
+    let samples = matches;
+
+    if (matches.length > MAX_SCHEMA_SAMPLES) {
+      samples = [];
+      const step = matches.length / MAX_SCHEMA_SAMPLES;
+      for (let i = 0; i < MAX_SCHEMA_SAMPLES; i++) {
+        const index = Math.floor(i * step);
+        if (matches[index]) {
+          samples.push(matches[index]);
+        }
+      }
+    }
+
+    let merged = buildSchemaTree(samples[0]);
+    samples.slice(1).forEach(content => {
+      const nextPlan = buildSchemaTree(content);
       merged = mergeSchemaTrees(merged, nextPlan);
     });
     return merged;
-  }, [files]);
+  }, [files, filterType, breadcrumbPath, breadcrumbSourcePath]);
 
-  // Helper to scan all files for Indexing (Breadcrumb)
+  // Update schema source count separate from memo
+  useEffect(() => {
+    let count = 0;
+    for (const f of files) {
+      if (!f.isAvailable || !f.content) continue;
+      let shouldInclude = true;
+      if (filterType === 'breadcrumb' && breadcrumbPath[0]) {
+        shouldInclude = matchBreadcrumb(f.content, breadcrumbSourcePath, breadcrumbPath);
+      }
+      if (shouldInclude) count++;
+    }
+    setSchemaSourceCount(count);
+  }, [files, filterType, breadcrumbPath, breadcrumbSourcePath]);
+
+  // Helper to scan all files for Indexing (Breadcrumb) & Full Schema
   const scanAllFiles = async () => {
-    setIsExporting(true); // Reuse export state to show busy
-    const updatedFiles = [...files];
-    let changed = false;
+    if (isScanning) return;
+    setIsScanning(true);
 
-    // Parse all files that define content (if missing)
-    await Promise.all(updatedFiles.map(async (f) => {
-      if (!f.isAvailable) return;
-      if (!f.content) {
-        try {
-          const text = await f.file.text();
-          f.content = JSON.parse(text);
-          changed = true;
-        } catch (e) {
-          console.error('Lazy parse failed', f.name);
+    // Work on a copy of the current state
+    const currentFiles = [...files];
+    let hasUpdates = false;
+    const CHUNK_SIZE = 50; // Larger chunk for faster throughput
+
+    try {
+      const unparsedIndices = currentFiles
+        .map((f, i) => (!f.content && f.isAvailable ? i : -1))
+        .filter(i => i !== -1);
+
+      if (unparsedIndices.length > 0) {
+        for (let i = 0; i < unparsedIndices.length; i += CHUNK_SIZE) {
+          const chunkIndices = unparsedIndices.slice(i, i + CHUNK_SIZE);
+
+          await Promise.all(chunkIndices.map(async (idx) => {
+            const f = currentFiles[idx];
+            try {
+              const text = await f.file.text();
+              f.content = JSON.parse(text);
+              hasUpdates = true;
+            } catch (e) {
+              console.error('Lazy parse failed', f.name);
+            }
+          }));
+
+          // Incrementally update state so schema grows visibly
+          if (hasUpdates) {
+            setFiles([...currentFiles]);
+          }
+
+          // Yield to UI
+          await new Promise(resolve => setTimeout(resolve, 10));
         }
       }
-    }));
-
-    setIsExporting(false);
-    if (changed) {
-      setFiles(updatedFiles);
+    } finally {
+      setIsScanning(false);
     }
   };
 
   // Trigger scan when switching to Breadcrumb mode
+  // Trigger scan automatically if there are unparsed files
   useEffect(() => {
-    if (filterType === 'breadcrumb') {
-      // If we have many files unparsed, scan them.
-      // Simple check: if > 5 files and only 5 have content.
-      const hasUnparsed = files.some(f => f.isAvailable && !f.content);
-      if (hasUnparsed) {
-        scanAllFiles();
-      }
+    const hasUnparsed = files.some(f => f.isAvailable && !f.content);
+    if (hasUnparsed) {
+      scanAllFiles();
     }
-  }, [filterType, files]);
+  }, [files]);
 
   // Derive Breadcrumb Tree
   const breadcrumbTree = useMemo(() => {
@@ -137,6 +201,21 @@ function App() {
           }
         } catch (e) {
           console.error('Failed to load saved paths', e);
+        }
+      }
+
+      // Sync selection with available schema (Remove ghosts)
+      if (selectedPaths.length > 0) {
+        const validPaths = selectedPaths.filter(p => allLeafPaths.includes(p));
+        // Only update if we have invalid/ghost paths
+        if (validPaths.length !== selectedPaths.length) {
+          setSelectedPaths(validPaths);
+          // If validPaths becomes empty here (e.g. total mismatch), 
+          // the next block will catch it and select ALL, which is usually desired behavior when switching contexts.
+          if (validPaths.length === 0) {
+            setSelectedPaths(allLeafPaths);
+            return;
+          }
         }
       }
 
@@ -177,26 +256,35 @@ function App() {
   };
 
   const previewData = useMemo(() => {
-    const samples = files.filter(f => f.isSample && f.isAvailable).map(f => f.content);
+    // If no filter is active, return the specific "isSample" files (the first few loaded)
+    const initialSamples = files.filter(f => f.isSample && f.isAvailable && f.content).map(f => f.content);
 
-    // 1. Keyword Filter
-    if (filterType === 'keyword') {
-      if (!filterKeyword) return samples;
-      return samples.filter(item => {
-        const flattened = flattenTour(item, selectedPaths, arrayRule);
-        return filterFlattenedData(flattened, filterKeyword, filterColumn, filterMode, filterCaseSensitive);
-      });
+    if (filterType === 'keyword' && !filterKeyword) return initialSamples;
+    if (filterType === 'breadcrumb' && (!breadcrumbPath[0])) return initialSamples;
+
+    // If filtering, we want to find ACTUAL matches from ANY loaded file, 
+    // to avoid the "Preview Empty" issue when the match is in file #100.
+    const matches: any[] = [];
+
+    for (const f of files) {
+      if (!f.isAvailable || !f.content) continue;
+
+      let isMatch = true;
+
+      if (filterType === 'breadcrumb') {
+        isMatch = matchBreadcrumb(f.content, breadcrumbSourcePath, breadcrumbPath);
+      } else if (filterType === 'keyword') {
+        const flattened = flattenTour(f.content, selectedPaths, arrayRule);
+        isMatch = filterFlattenedData(flattened, filterKeyword, filterColumn, filterMode, filterCaseSensitive);
+      }
+
+      if (isMatch) {
+        matches.push(f.content);
+        if (matches.length >= 10) break; // Limit preview to 10 items for performance
+      }
     }
 
-    // 2. Breadcrumb Filter
-    if (filterType === 'breadcrumb') {
-      if (!breadcrumbPath[0]) return samples; // No L1 selected
-      return samples.filter(item => {
-        return matchBreadcrumb(item, breadcrumbSourcePath, breadcrumbPath);
-      });
-    }
-
-    return samples;
+    return matches;
   }, [files, filterType, filterKeyword, filterColumn, filterMode, filterCaseSensitive, breadcrumbPath, breadcrumbSourcePath, selectedPaths, arrayRule]);
 
   const handleExport = async () => {
@@ -350,6 +438,8 @@ function App() {
               selectedPaths={selectedPaths}
               onTogglePath={handleTogglePath}
               onToggleBatch={handleToggleBatch}
+              sourceCount={schemaSourceCount}
+              isScanning={isScanning}
             />
           )}
         </aside>

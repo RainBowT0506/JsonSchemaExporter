@@ -8,13 +8,17 @@ interface SchemaTreeProps {
     selectedPaths: string[];
     onTogglePath: (path: string, included: boolean) => void;
     onToggleBatch: (paths: string[], included: boolean) => void;
+    sourceCount?: number;
+    isScanning?: boolean;
 }
 
 export const SchemaTree: React.FC<SchemaTreeProps> = ({
     tree,
     selectedPaths,
     onTogglePath,
-    onToggleBatch
+    onToggleBatch,
+    sourceCount,
+    isScanning
 }) => {
     const [search, setSearch] = useState('');
     const [expanded, setExpanded] = useState<Record<string, boolean>>({ 'root': true });
@@ -40,7 +44,7 @@ export const SchemaTree: React.FC<SchemaTreeProps> = ({
         const isExpanded = expanded[node.path] || false;
         const isSelected = selectedPaths.includes(node.path);
 
-        // Check if some children are selected (for indeterminate state)
+        // Check if some children are select (for indeterminate state)
         const childrenPaths = getAllChildrenPaths(node);
         const selectedChildrenCount = childrenPaths.filter(p => selectedPaths.includes(p)).length;
         const allChildrenSelected = childrenPaths.length > 0 && selectedChildrenCount === childrenPaths.length;
@@ -116,9 +120,18 @@ export const SchemaTree: React.FC<SchemaTreeProps> = ({
     return (
         <div className="schema-explorer glass-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
             <div style={{ padding: '1rem', borderBottom: '1px solid var(--border-color)' }}>
-                <h3 style={{ fontSize: '1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h3 style={{ fontSize: '1rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <Filter size={16} /> Schema Explorer
                 </h3>
+
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+                    {isScanning ? (
+                        <span style={{ color: 'var(--accent-color)', fontWeight: 600 }}>Scanning files...</span>
+                    ) : (
+                        <span>Source: <strong>{sourceCount || 0}</strong> valid files</span>
+                    )}
+                </div>
+
                 <div style={{ position: 'relative' }}>
                     <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
                     <input
